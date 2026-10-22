@@ -1,0 +1,11 @@
+# Nova 2.7.0 partition table (16 MB flash)
+# Two 6 MB app slots (wireless update needs two), 3.9 MB raw storage for memory notes.
+# Arduino IDE: Tools > Partition Scheme > Custom. Only a USB upload changes the table;
+# on first boot 2.7.0 moves the notes from the old location (0x610000) to the new one.
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x5000,
+otadata,  data, ota,     0xe000,  0x2000,
+app0,     app,  ota_0,   0x10000, 0x600000,
+app1,     app,  ota_1,   0x610000,0x600000,
+ffat,     data, fat,     0xC10000,0x3E0000,
+coredump, data, coredump,0xFF0000,0x10000,
