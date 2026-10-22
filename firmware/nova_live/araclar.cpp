@@ -148,16 +148,17 @@ int sesliSesKomutu(const char *metin, int simdiki) {
 }
 
 const char *aracEtiketi(const char *ad) {
-  static const char *const T[][2] = {
-    {"set_volume", "sesi ayarlıyor"},   {"set_brightness", "ışığı ayarlıyor"},
-    {"device_status", "kendine bakıyor"}, {"change_setting", "ayar değiştiriyor"},
-    {"remember", "not alıyor"},         {"forget", "not siliyor"},
-    {"set_timer", "zamanlayıcı kuruyor"}, {"set_alarm", "alarm kuruyor"},
-    {"list_timers", "alarmlara bakıyor"}, {"cancel_timer", "alarm siliyor"},
+  // ad, Türkçe, İngilizce (ekran dili: UI_ENGLISH)
+  static const char *const T[][3] = {
+    {"set_volume", "sesi ayarlıyor", "setting volume"},       {"set_brightness", "ışığı ayarlıyor", "setting brightness"},
+    {"device_status", "kendine bakıyor", "checking itself"},  {"change_setting", "ayar değiştiriyor", "changing a setting"},
+    {"remember", "not alıyor", "taking a note"},              {"forget", "not siliyor", "deleting a note"},
+    {"set_timer", "zamanlayıcı kuruyor", "setting a timer"},  {"set_alarm", "alarm kuruyor", "setting an alarm"},
+    {"list_timers", "alarmlara bakıyor", "checking alarms"},  {"cancel_timer", "alarm siliyor", "cancelling alarm"},
   };
   if (!ad) return "";
   for (auto &e : T)
-    if (!strcmp(ad, e[0])) return e[1];
+    if (!strcmp(ad, e[0])) return UI_TR(e[1], e[2]);
   return "";
 }
 

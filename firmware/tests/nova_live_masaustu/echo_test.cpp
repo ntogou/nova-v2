@@ -129,6 +129,29 @@ int main() {
     CHECK(adim >= 8 && adim <= 12, "geri acilma %d blok (~10)", adim);
   }
 
+  printf("== 3d) kullanıcı eşiğin biraz altında konuşunca eşik tırmanmaz, sonra normal sesle açılır (2.9.0)\n");
+  {
+    echomath::EchoGate h;
+    h.set(-30.0f, 8.0f, 8);
+    unsigned sd = 4242;
+    auto jit = [&]() { sd = sd * 1103515245u + 12345u; return ((sd >> 16) % 600) / 100.0f - 3.0f; };
+    for (int i = 0; i < 300; i++) h.decide(4000, 4000 * powf(10.0f, (-15.0f + jit()) / 20.0f));   // öğrenme
+    float esik0 = h.thresholdDb();
+    int acik = 0;
+    for (int i = 0; i < 94; i++) acik += h.decide(4000, 4000 * powf(10.0f, (esik0 - 2.5f + jit() * 0.3f) / 20.0f));   // ~3 sn kısık söz
+    float esik1 = h.thresholdDb();
+    printf("   eşik önce %.1f dB, 3 sn kısık sözden sonra %.1f dB (açık %d/94)\n", esik0, esik1, acik);
+    CHECK(esik1 - esik0 < 1.5f, "kisik sozde esik tirmandi: %.1f -> %.1f", esik0, esik1);
+    int ilk = -1;
+    for (int i = 0; i < 6; i++) if (h.decide(4000, 4000 * powf(10.0f, (esik0 + 3.0f) / 20.0f)) && ilk < 0) ilk = i;
+    CHECK(ilk >= 0 && ilk <= 1, "normal seste kapi acilmadi (%d)", ilk);
+    // Nova tek başına konuşurken kapı yine kapalı kalır
+    for (int i = 0; i < 40; i++) h.decide(4000, 4000 * powf(10.0f, -15.0f / 20.0f));
+    int yanlis = 0;
+    for (int i = 0; i < 300; i++) yanlis += h.decide(4000, 4000 * powf(10.0f, (-15.0f + jit()) / 20.0f));
+    CHECK(yanlis <= 6, "Nova tek basina konusurken kapi acik: %d/300", yanlis);
+  }
+
   printf("== 4) 24 -> 16 kHz indirici: 1 kHz geçer, 10 kHz (16 kHz'te katlanırdı) süzülür, blok sınırında süreklilik\n");
   Downsampler24to16 ds;
   int16_t in[240], out[160];

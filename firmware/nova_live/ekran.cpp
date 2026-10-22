@@ -1,5 +1,6 @@
 #include "ekran.h"
 #include "yazitipleri.h"
+#include "config.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -316,8 +317,14 @@ void cekirdek(float cx, float cy, float r, uint16_t renk, uint16_t nokta) {
   halka(cx, cy, r * 0.4f, 0, nokta);
 }
 
-const char *const GUN[7] = {"PAZ", "PZT", "SAL", "ÇAR", "PER", "CUM", "CMT"};
-const char *const AY[12] = {"OCA", "ŞUB", "MAR", "NİS", "MAY", "HAZ", "TEM", "AĞU", "EYL", "EKİ", "KAS", "ARA"};
+const char *const GUN_TR[7] = {"PAZ", "PZT", "SAL", "ÇAR", "PER", "CUM", "CMT"};
+const char *const AY_TR[12] = {"OCA", "ŞUB", "MAR", "NİS", "MAY", "HAZ", "TEM", "AĞU", "EYL", "EKİ", "KAS", "ARA"};
+const char *const GUN_EN[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+const char *const AY_EN[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+const char *const *const GUN = UI_TR(GUN_TR, GUN_EN);
+const char *const *const AY = UI_TR(AY_TR, AY_EN);
+// Yüzde: Türkçede işaret önde (%79), İngilizcede arkada (79%)
+const char *const YUZDE = UI_TR("%%%d", "%d%%");
 
 // ---- durumlar
 void uyku(const Veri &v) {
@@ -339,11 +346,11 @@ void uyku(const Veri &v) {
     else tekSatir(3, 6, 120, v.bildirim, 148, KEHRIBAR, true);
     return;
   }
-  if (v.bootIpucu) yaz(3, 7, 121, "BOOT'a bas", SONUK);
+  if (v.bootIpucu) yaz(3, 7, 121, UI_TR("BOOT'a bas", "press BOOT"), SONUK);
   else if (v.hava && *v.hava) tekSatir(3, 7, 121, v.hava, 96, SONUK, true);
   char p[16];
   if (v.pil >= 0) {
-    snprintf(p, sizeof(p), "%%%d", v.pil);
+    snprintf(p, sizeof(p), YUZDE, v.pil);
     int w = genislik(3, p, 0, -1);
     yaz(3, 137 - w, 121, p, SONUK);
   }
@@ -365,7 +372,7 @@ void dinliyor(const Veri &v) {
   } else if (v.kullanici && *v.kullanici) {
     tekSatir(2, 6, 119, v.kullanici, 148, SONUK, false);
   } else {
-    ortala(2, 117, "dinliyorum", KEHRIBAR, 1);
+    ortala(2, 117, UI_TR("dinliyorum", "listening"), KEHRIBAR, 1);
   }
 }
 
@@ -377,11 +384,11 @@ void dusunuyor(const Veri &v) {
   halka(80, 56, 25, 24, ARKA);
   halka(80, 56, 25, 24, KEHRIBAR, -v.t * 100.0f, -v.t * 100.0f + 90);
   halka(80, 56, 6, 0, SOLUK);
-  const char *et = (v.etkinlik && *v.etkinlik) ? v.etkinlik : "düşünüyorum…";
+  const char *et = (v.etkinlik && *v.etkinlik) ? v.etkinlik : UI_TR("düşünüyorum…", "thinking…");
   ortala(1, 106, et, YAZI);
   if (v.etkinlikSn >= 0) {
     char s[32];
-    snprintf(s, sizeof(s), "arka model · %d sn", v.etkinlikSn);
+    snprintf(s, sizeof(s), UI_TR("arka model · %d sn", "backend · %d s"), v.etkinlikSn);
     ortala(3, 120, s, SONUK);
   }
 }
@@ -402,7 +409,7 @@ void konusuyor(const Veri &v) {
   int ust = 62;
   if (v.kullanici && *v.kullanici) {
     char b[200];
-    snprintf(b, sizeof(b), "sen: %s", v.kullanici);
+    snprintf(b, sizeof(b), UI_TR("sen: %s", "you: %s"), v.kullanici);
     tekSatir(2, 6, 58, b, 148, SONUK, true);
     ust = 64;
   }
@@ -444,9 +451,9 @@ void guncelleme(const Veri &v) {
   for (int i = 0; i < 24; i++) renk[i] = i < yanan ? KEHRIBAR : KAPALI;
   parcali(80, 58, 36.5f, 27.5f, 24, 3.0f, renk, 0);
   char s[12];
-  snprintf(s, sizeof(s), "%%%d", v.ota);
+  snprintf(s, sizeof(s), YUZDE, v.ota);
   ortala(1, 63, s, YAZI);
-  ortala(2, 112, "güncelleniyor", SONUK, 1);
+  ortala(2, 112, UI_TR("güncelleniyor", "updating"), SONUK, 1);
 }
 
 void pilBitti(const Veri &) {
@@ -454,8 +461,8 @@ void pilBitti(const Veri &) {
   dolu(52, 44, 2, 30, KIRMIZI); dolu(102, 44, 2, 30, KIRMIZI);
   dolu(104, 53, 4, 12, KIRMIZI);
   dolu(56, 48, 8, 22, KIRMIZI);
-  ortala(2, 104, "pil bitti", KIRMIZI, 1);
-  ortala(3, 118, "kapanıyorum", SONUK);
+  ortala(2, 104, UI_TR("pil bitti", "battery empty"), KIRMIZI, 1);
+  ortala(3, 118, UI_TR("kapanıyorum", "shutting down"), SONUK);
 }
 
 }  // namespace
@@ -534,9 +541,9 @@ void ciz(uint16_t *tampon, const Veri &v) {
     case DINLIYOR: dinliyor(v); break;
     case DUSUNUYOR: dusunuyor(v); break;
     case KONUSUYOR: konusuyor(v); break;
-    case ACILIS: acilis(v, "açılıyor"); break;
-    case WIFI: acilis(v, "WiFi aranıyor"); break;
-    case BAGLANIYOR: acilis(v, "bağlanıyor"); break;
+    case ACILIS: acilis(v, UI_TR("açılıyor", "starting")); break;
+    case WIFI: acilis(v, UI_TR("WiFi aranıyor", "finding WiFi")); break;
+    case BAGLANIYOR: acilis(v, UI_TR("bağlanıyor", "connecting")); break;
     case GUNCELLEME: guncelleme(v); break;
     case PIL_BITTI: pilBitti(v); break;
   }

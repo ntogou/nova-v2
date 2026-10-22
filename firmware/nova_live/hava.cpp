@@ -130,19 +130,21 @@ size_t havaKisa(char *out, size_t cap, uint32_t simdiMs) {
     memcpy(durum, d, n);
     durum[n] = 0;
   }
-  // Uzun adların ekrana sığan kısaltması (durumAdi ile aynı adlar)
-  static const char *const K[][2] = {
-    {"çoğunlukla açık", "az bulutlu"}, {"parçalı bulutlu", "parçalı bulut"},
-    {"çiseleyen yağmurlu", "çisenti"}, {"dondurucu çisentili", "çisenti"},
-    {"hafif yağmurlu", "hafif yağmur"}, {"yağmurlu", "yağmur"}, {"kuvvetli yağmurlu", "kuvvetli yağmur"},
-    {"dondurucu yağmurlu", "donan yağmur"}, {"hafif karlı", "hafif kar"}, {"karlı", "kar"},
-    {"yoğun karlı", "yoğun kar"}, {"kar taneli", "kar"}, {"hafif sağanaklı", "hafif sağanak"},
-    {"sağanak yağışlı", "sağanak"}, {"şiddetli sağanaklı", "sağanak"}, {"kar sağanaklı", "kar"},
-    {"gök gürültülü fırtınalı", "fırtına"}, {"dolulu fırtınalı", "dolu"}, {"değişken", ""},
+  // Uzun adların ekrana sığan kısaltması (durumAdi ile aynı adlar): Türkçe, İngilizce (ekran dili: UI_ENGLISH)
+  static const char *const K[][3] = {
+    {"açık", "açık", "clear"}, {"çoğunlukla açık", "az bulutlu", "mostly clear"},
+    {"parçalı bulutlu", "parçalı bulut", "partly cloudy"}, {"kapalı", "kapalı", "overcast"}, {"sisli", "sisli", "fog"},
+    {"çiseleyen yağmurlu", "çisenti", "drizzle"}, {"dondurucu çisentili", "çisenti", "drizzle"},
+    {"hafif yağmurlu", "hafif yağmur", "light rain"}, {"yağmurlu", "yağmur", "rain"},
+    {"kuvvetli yağmurlu", "kuvvetli yağmur", "heavy rain"}, {"dondurucu yağmurlu", "donan yağmur", "freezing rain"},
+    {"hafif karlı", "hafif kar", "light snow"}, {"karlı", "kar", "snow"}, {"yoğun karlı", "yoğun kar", "heavy snow"},
+    {"kar taneli", "kar", "snow"}, {"hafif sağanaklı", "hafif sağanak", "light showers"},
+    {"sağanak yağışlı", "sağanak", "showers"}, {"şiddetli sağanaklı", "sağanak", "showers"}, {"kar sağanaklı", "kar", "snow"},
+    {"gök gürültülü fırtınalı", "fırtına", "storm"}, {"dolulu fırtınalı", "dolu", "hail"}, {"değişken", "", ""},
   };
   const char *kisa = durum;
   for (auto &e : K)
-    if (!strcmp(durum, e[0])) { kisa = e[1]; break; }
+    if (!strcmp(durum, e[0])) { kisa = UI_TR(e[1], e[2]); break; }
   int n = snprintf(out, cap, *kisa ? "%ld° %s" : "%ld°", derece, kisa);
   if (n < 0 || (size_t)n >= cap) { out[0] = 0; return 0; }
   return (size_t)n;

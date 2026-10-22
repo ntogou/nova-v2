@@ -312,7 +312,7 @@ static void uiTask(void *) {
     uint32_t arka = arkaBas;
     if (arka) {
       v.etkinlikSn = (int)((now - arka) / 1000);
-      if (!aEtkinlik[0]) strcpy(aEtkinlik, "araştırıyor…");
+      if (!aEtkinlik[0]) strcpy(aEtkinlik, UI_TR("araştırıyor…", "searching…"));
     }
     v.altyazi = aNova;
     v.kullanici = aKul;

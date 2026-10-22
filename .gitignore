@@ -1,0 +1,33 @@
+# Anahtarlar, WiFi ve kablosuz yükleme şifresi — ASLA YÜKLENMEZ
+**/secrets.h
+
+# Sahibin kişisel profili ve özel notları — ASLA YÜKLENMEZ
+**/kisisel.h
+
+# Derlenmiş çıktılar (içine secrets.h ve kisisel.h düz metin olarak gömülür!)
+**/build/
+*.bin
+*.elf
+*.map
+*.o
+*.d
+*.a
+*.exe
+*.out
+firmware/tests/**/test_run*
+firmware/tests/**/echo_run*
+firmware/tests/**/arac_run*
+
+# Cihaz kayıtları ve ses kayıtları (kişisel konuşma dökümleri ve yerel IP içerir)
+nova_kayit_*.txt
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.mp4
+
+# Editör ve işletim sistemi dosyaları
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -498,7 +498,7 @@ struct Link : ModelSink {
   void fatal(const char *why) {
     tagLine("HATA: %s", why);
     char b[220];
-    snprintf(b, sizeof(b), "Hata: %s", why);
+    snprintf(b, sizeof(b), UI_TR("Hata: %s", "Error: %s"), why);
     uiText("nova", b, true);
     spkFlush();
     toIdle();
@@ -1161,13 +1161,13 @@ struct Link : ModelSink {
       if (!micWarned) {
         micWarned = true;
         logLine("[mik] UYARI: mikrofonlardan ses gelmiyor, model seni duyamaz. Yazılı deneme: 's'. Arıza bulma: 'c'.");
-        uiText("nova", "Mikrofonlardan ses gelmiyor.", true);
+        uiText("nova", UI_TR("Mikrofonlardan ses gelmiyor.", "No sound from the mics."), true);
       }
       open = false;
     } else if (open && micWarned) {
       micWarned = false;
       logLine("[mik] mikrofon geri geldi, dinliyorum");
-      uiText("nova", "Mikrofon geri geldi.", true);
+      uiText("nova", UI_TR("Mikrofon geri geldi.", "Mics are back."), true);
     }
     for (int i = 0; i < 4 && micReadFrame((uint8_t *)frame); i++) {
       if (!open) {

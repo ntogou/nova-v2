@@ -397,7 +397,7 @@ static void pumpMicWatch() {
   bool ok = st == MIC_OK || st == MIC_REMAPPED || st == MIC_UNKNOWN;
   linkSetMicOk(ok);
   if (st != lastState) {                       // hüküm değişti: ekrana da yaz
-    if (lastState != MIC_UNKNOWN || !ok) uiText("nova", ok ? "Mikrofon tamam." : "Mikrofonlardan ses gelmiyor.", true);
+    if (lastState != MIC_UNKNOWN || !ok) uiText("nova", ok ? UI_TR("Mikrofon tamam.", "Mics OK.") : UI_TR("Mikrofonlardan ses gelmiyor.", "No sound from the mics."), true);
     lastState = st;
   }
   if (!micWatch) return;
@@ -440,7 +440,7 @@ static void pumpMicHealth() {
 static void warnIfKeyMissing() {
   if (linkKeyPresent()) return;
   Log.println("[bağ] UYARI: secrets.h içinde OPENAI_API_KEY doldurulmamış.");
-  uiText("nova", "secrets.h: OPENAI_API_KEY boş", true);
+  uiText("nova", UI_TR("secrets.h: OPENAI_API_KEY boş", "secrets.h: OPENAI_API_KEY is empty"), true);
 }
 
 // ---------------------------------------------------------------- ses tonu
@@ -929,7 +929,7 @@ static void pumpZamanlayici() {
            "Cihazdan bildirim: kullanıcının kurduğu %s %s (etiket: %s). Bunu kullanıcıya hemen, tek kısa cümleyle söyle.",
            alarm ? "alarm" : "zamanlayıcının süresi", alarm ? "çaldı" : "doldu", c.etiket);
   char ekran[96];
-  snprintf(ekran, sizeof(ekran), "%s: %s", alarm ? "Alarm" : "Zamanlayıcı", c.etiket);
+  snprintf(ekran, sizeof(ekran), "%s: %s", alarm ? "Alarm" : UI_TR("Zamanlayıcı", "Timer"), c.etiket);
   uiText("nova", ekran, true);
   bostaUyan();
   if (linkState() == LINK_IDLE && audioOk && !otaActive) {

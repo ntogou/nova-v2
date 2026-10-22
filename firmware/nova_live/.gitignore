@@ -1,0 +1,14 @@
+# Anahtarlar ve şifreler: asla yüklenmez
+secrets.h
+# Sahibin kişisel profili (kisilik için): yüklenmez; örneği kisisel.example.h
+kisisel.h
+# Arduino IDE "Export Compiled Binary" çıktısı (içine secrets.h ve kisisel.h düz metin gömülür!)
+build/
+*.bin
+*.elf
+*.map
+# Kayıt dökümleri ve ses dosyaları
+nova_kayit_*.txt
+*.wav
+*.mp3
+*.m4a

@@ -221,17 +221,21 @@ int main() {
     // ekranın kısa hali
     CHECK(!havaKisa(hy, sizeof(hy), 1000 + 60000), "ozetten kisa hal cikti: %s", hy);   // "ozet": şu an yok
     havaSakla(oz, 5000);
-    CHECK(havaKisa(hy, sizeof(hy), 6000) && !strcmp(hy, "19° parçalı bulut"), "kisa: %s", hy);
+    CHECK(havaKisa(hy, sizeof(hy), 6000) && !strcmp(hy, UI_TR("19° parçalı bulut", "19° partly cloudy")), "kisa: %s", hy);
     CHECK(!havaKisa(hy, sizeof(hy), 5000 + HAVA_ESKI_MS + 1), "eski kisa verildi");
     havaSakla("Hava durumu (İzmir, saat 09:00 itibarıyla): şu an -3°C (hissedilen -7), gök gürültülü fırtınalı, nem %90.", 5000);
-    CHECK(havaKisa(hy, sizeof(hy), 6000) && !strcmp(hy, "-3° fırtına"), "eksi: %s", hy);
+    CHECK(havaKisa(hy, sizeof(hy), 6000) && !strcmp(hy, UI_TR("-3° fırtına", "-3° storm")), "eksi: %s", hy);
     havaSakla("Hava durumu (İzmir, saat 09:00 itibarıyla): şu an 7°C (hissedilen 5), değişken, nem %90.", 5000);
     CHECK(havaKisa(hy, sizeof(hy), 6000) && !strcmp(hy, "7°"), "degisken: %s", hy);
+    havaSakla("Hava durumu (İzmir, saat 09:00 itibarıyla): şu an 10°C (hissedilen 9), kapalı, nem %90.", 5000);
+    CHECK(havaKisa(hy, sizeof(hy), 6000) && !strcmp(hy, UI_TR("10° kapalı", "10° overcast")), "kapali: %s", hy);
+    havaSakla("Hava durumu (İzmir, saat 09:00 itibarıyla): şu an 7°C (hissedilen 5), değişken, nem %90.", 5000);
     char kucuk[3];   // "7°" 3 bayt + sonlandırıcı sığmaz
     CHECK(!havaKisa(kucuk, sizeof(kucuk), 6000) && !kucuk[0], "kucuk tampon");
   }
   printf("== 9b) araç etiketleri (ekranda düşünürken)\n");
-  CHECK(!strcmp(aracEtiketi("remember"), "not alıyor") && !strcmp(aracEtiketi("set_alarm"), "alarm kuruyor") &&
+  CHECK(!strcmp(aracEtiketi("remember"), UI_TR("not alıyor", "taking a note")) &&
+        !strcmp(aracEtiketi("set_alarm"), UI_TR("alarm kuruyor", "setting an alarm")) &&
         !strcmp(aracEtiketi("bilinmeyen"), "") && !strcmp(aracEtiketi(nullptr), ""), "etiketler");
 
   printf("== 10) oturum sonu not çıkarma: istek gövdesi geçerli JSON, cevap hafızaya uygulanır\n");

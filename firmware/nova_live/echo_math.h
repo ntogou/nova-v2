@@ -93,6 +93,7 @@ struct EchoGate {
   float duckFrac = 0.63f;    // eşiğin 4 dB altı
   int nearNeed = 3;          // ardışık parça (~96 ms)
   int nearRun = 0;
+  static constexpr float LIVE_BAND_DB = 3.0f;   // canlı oranın hızlı öğrenildiği bant (üstü yavaş)
   bool candidate = false;
   uint32_t liveN = 0;        // canlı orana katılan parça sayısı (açılıştan beri)
   void set(float residRefDb, float margin, int hangN) {
@@ -122,7 +123,12 @@ struct EchoGate {
     if (refRms > farMin * 4 && refRms >= refEnv * 0.6f) {
       float adim;
       if (liveN < 60) adim = ratioDb > liveDb ? (ratioDb > liveDb + 6.0f ? 1.2f : 0.4f) : -0.05f;
+      // Canlı orandan 3 dB'ten fazla yukarıdaki parça da kullanıcı olabilir (eşiğin altında kalan kısık söz):
+      // yavaş öğrenilir. 2.9.0'a kadar bunlar hızlı öğreniliyordu; kullanıcı eşiğin biraz altında konuştukça
+      // eşik saniyede ~12 dB tırmanıyor, araya girmek için gittikçe bağırmak gerekiyordu (22 Ekim 0348 kaydı:
+      // eşik -14'ten -8 dB'e).
       else if (userish) adim = ratioDb > liveDb ? 0.02f : 0.0f;   // sızan yankı yine de ~10 sn'de öğrenilir
+      else if (ratioDb > liveDb + LIVE_BAND_DB) adim = 0.005f;      // gerçek yankı artışı bandın içinden öğrenilir
       else adim = ratioDb > liveDb ? 0.4f : -0.05f;
       liveDb += adim;
       if (liveDb < baseDb) liveDb = baseDb;

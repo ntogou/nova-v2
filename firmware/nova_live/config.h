@@ -2,10 +2,17 @@
 // Pin haritası 10 Ekim 2026'da lehimlenen haliyle.
 #pragma once
 
-#define FW_VERSION "2.8.9"
+#define FW_VERSION "2.9.0"
 
 // ---------- Pinler ----------
 // Sağ amfi (MAX98357A)
+// Ekran dili (2.9.0): 1 = İngilizce, 0 = Türkçe. Yalnızca ekrandaki sabit yazılar (durum, tarih, hava,
+// araç etiketleri, kısa notlar). Konuşmanın dili, Serial kaydı ve nova.local paneli değişmez.
+#ifndef UI_ENGLISH
+#define UI_ENGLISH 1
+#endif
+#define UI_TR(tr, en) (UI_ENGLISH ? (en) : (tr))
+
 #define PIN_AMP_R_BCLK 42
 #define PIN_AMP_R_LRC   2
 #define PIN_AMP_R_DIN  41
