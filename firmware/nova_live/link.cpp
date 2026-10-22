@@ -150,6 +150,7 @@ struct Link : ModelSink {
   // akışta uzun bir boşluk varsa ses ağdan geç gelmiştir; yoksa model duraksamıştır (sessizlik yollamıştır).
   uint32_t rxPrevAt = 0, turnMaxGap = 0;
   uint32_t silentFrames = 0;           // mikrofon kapalıyken gönderilen sessizlik çerçeveleri
+  uint32_t speakSilentSkip = 0;        // konuşma sırasında seyreltilen sıfır çerçevesi sayacı
   uint32_t speakUnderruns = 0;         // konuşma başlarken hoparlörün "ses yetişmedi" sayacı
   uint32_t netLate = 0, modelPauses = 0;   // bu oturumda: ağdan geç gelen ses / modelin duraksaması
   uint32_t txPeakMax = 0, txLoudFrames = 0;  // son durum satırından beri modele giden en yüksek tepe, yüksek çerçeve sayısı
@@ -168,6 +169,7 @@ struct Link : ModelSink {
   bool spkQuiet = false;
   bool userCutPause = false;           // duraklamada kullanıcı konuştu: cevap bitmiş sayılacak
   bool userTurnOpen = false;           // kullanıcıdan yazı geldi; durunca ekran "düşünüyor"a geçer
+  bool inUserBracket = false;          // döküm modelinin "[sniff]", "[breath]" etiketi sürüyor mu
   uint32_t backendAt = 0;              // arka modele sorunun devredildiği an (süresini yazmak için)
 
   // ---- Cihaz araçları: arka modelin çağrıları sırayla yürütülür (mesaj işlenirken değil, döngüde)
@@ -484,6 +486,7 @@ struct Link : ModelSink {
     byeTail[0] = 0;
     spkQuiet = false;
     userTurnOpen = false;
+    inUserBracket = false;
     backendAt = 0;
     reqVoiceCut = false;
     preSpeechUserText = false;
@@ -660,6 +663,7 @@ struct Link : ModelSink {
     turnAudioBytes = 0;
     tailSilentBytes = 0;
     spkQuiet = false;
+    speakSilentSkip = 0;
     userCutPause = false;
     userTurnOpen = false;
     speakUnderruns = spkUnderrunCount();
@@ -790,8 +794,28 @@ struct Link : ModelSink {
     if (closing) return;
     uint32_t n = now();
     uint32_t prevUserAt = lineAt[1];
-    lineAt[fromUser ? 1 : 0] = n;
     if (fromUser) {
+      // Döküm modelinin ürettiği "[sniff]", "[breath]", "[laugh" gibi ses etiketlerini ayıkla;
+      // yalnızca etiket ya da noktalama (".") geldiyse konuşma sayma (Nova'nın sözünü kesmesin,
+      // ekranı boşuna "düşünüyor"da bekletmesin — 2.8.4 kaydı satır 228-238).
+      char clean[256];
+      size_t co = 0;
+      bool hasWord = false;
+      for (const char *p = text; *p && co + 1 < sizeof(clean); p++) {
+        uint8_t c = (uint8_t)*p;
+        if (c == '[') { inUserBracket = true; continue; }
+        if (inUserBracket) {
+          if (c == ']' || c == ' ' || c == '\n') inUserBracket = false;
+          continue;
+        }
+        if (c == ']') continue;
+        clean[co++] = (char)c;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || (c >= 0xC3 && c <= 0xC5))
+          hasWord = true;
+      }
+      clean[co] = 0;
+      if (!hasWord) return;
+      lineAt[1] = n;
       if (P->fullDuplex) {
         // Duraklamada kullanıcı konuştu: Nova'nın cevabı burada bitmiş sayılır (ana döngü bitirir;
         // buradan oturum kapatılamaz, sunucu mesajı işlenirken çağrılıyoruz).
@@ -807,12 +831,13 @@ struct Link : ModelSink {
         if (state == LINK_THINK) state = LINK_LISTEN;
         if (state != LINK_SPEAK || !lateTail) userTurnOpen = true;
       }
-      byeFeed(text);
+      byeFeed(clean);
       armIdle(n);
-      addLine(true, text);
-      uiText("user", text, false);
+      addLine(true, clean);
+      uiText("user", clean, false);
       return;
     }
+    lineAt[0] = n;
     if (dropTurn) return;                 // kesilen turun yazısı da atılır
     addLine(false, text);
     if (state == LINK_SPEAK) queueCaption(text);
@@ -1149,21 +1174,43 @@ struct Link : ModelSink {
         // Kapalıyken çerçeveler atılır: kuyrukta eski ses birikmesin. GPT-Live'da akış kesilmez
         // (oturumun saati giriş sesidir): mikrofonun yerine sessizlik gider.
         if (!P->fullDuplex || !ws.isOpen()) continue;
+        sessFrames++;
+        // Nova konuşurken karşıdan yoğun ses (64 KB/s) gelir; aynı anda 64 KB/s sıfır çerçevesi
+        // göndermek TCP alım penceresini tıkayabiliyor (2.8.3 İngilizce kaydı: 2,5 sn boşluk).
+        // Hoparlör tamponu dolarken hiç gönderilmez, normalde 4 çerçevede 1 gönderilir.
+        if (state == LINK_SPEAK && !spkQuiet && ((!genDone && spkBufferedMs() < (uint32_t)prebufMs) || (++speakSilentSkip & 3) != 0)) {
+          silentFrames++;
+          continue;
+        }
         memset(frame, 0, MIC_FRAME_BYTES);
         size_t zl = P->buildAudio((char *)ws.txPayload(), ws.txPayloadCap(), frame, MIC_FRAME_SAMPLES);
         if (!zl || !ws.send(WsClient::OP_TEXT, zl)) { onClosed(); return; }
         silentFrames++;
-        sessFrames++;
         lastTxAt = n;
+        if (state == LINK_SPEAK) break;   // konuşurken adım başına en çok 1 gönderim: önce gelen ses okunsun
         continue;
       }
       int32_t peak = 0;
       for (int j = 0; j < MIC_FRAME_SAMPLES; j++) {
         int32_t v = ((int32_t)frame[j] * MIC_UPLINK_GAIN_Q8) >> 8;
+        // Yumuşak tavan (2.8.7): yüksek sesle konuşunca tepe kırpılmasın (2.8.5 kaydı: tepe 32768, 48 çerçeve)
+        if (v > 24000) v = 24000 + ((v - 24000) >> 2);
+        else if (v < -24000) v = -24000 + ((v + 24000) >> 2);
         if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
         frame[j] = (int16_t)v;
         if (v < 0) v = -v;
         if (v > peak) peak = v;
+      }
+      // Nova konuşurken yankı kapısı kapalıysa (peak == 0, kullanıcı susuyor) sıfır çerçeveleri seyreltilir;
+      // kullanıcı konuşmaya başladığı anda (peak > 0) her çerçeve gecikmesiz gider.
+      if (P->fullDuplex && state == LINK_SPEAK && !spkQuiet && peak == 0) {
+        if ((!genDone && spkBufferedMs() < (uint32_t)prebufMs) || (++speakSilentSkip & 3) != 0) {
+          silentFrames++;
+          sessFrames++;
+          continue;
+        }
+      } else {
+        speakSilentSkip = 0;
       }
       // Sırayı model belirler; mikrofon düşünürken de akmaya devam eder.
       bool loud = peak > MIC_ACTIVITY_PEAK;
@@ -1194,6 +1241,7 @@ struct Link : ModelSink {
       sentFrames++;
       sessFrames++;
       lastTxAt = n;
+      if (state == LINK_SPEAK) break;     // konuşurken adım başına en çok 1 gönderim: gelen ses bekletilmesin
     }
   }
 
@@ -1333,10 +1381,10 @@ struct Link : ModelSink {
         thinkSince = n;
         userTurnOpen = false;
       }
-      if (state == LINK_THINK && since(n, thinkSince) > LINK_THINK_MAX_MS) backToListen();
       // Sunucu "konuşma sürüyor" diyorsa uyku sayacı bekler; işaret takılı kalırsa üst sınır keser.
       // Arka model bir işi sürdürürken (arama 10-20 sn sürebiliyor) oturum sessizlik yüzünden kapatılmaz.
       bool backendWait = P->fullDuplex && backendAt && since(n, backendAt) < LINK_BACKEND_WAIT_MS;
+      if (state == LINK_THINK && !backendWait && since(n, thinkSince) > LINK_THINK_MAX_MS) backToListen();
       // Kısa kapanış: cevap soruyla bitmedi, ardından kimse konuşmadı. Mikrofonda yeni bir ses varsa (konuşmaya
       // başlamış olabilir, yazısı henüz gelmedi) biraz daha beklenir; klavye bunu en çok normal uyku süresine uzatır.
       if (shortDeadline && state == LINK_LISTEN && !backendWait && !userTurnOpen && !vadActive && after(n, shortDeadline)) {

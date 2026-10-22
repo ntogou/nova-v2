@@ -4,6 +4,8 @@
 #include "link.h"
 #include "config.h"
 #include "audio.h"
+#include "gptlive.h"
+#include <math.h>
 #include <string>
 #include <vector>
 
@@ -43,6 +45,11 @@ struct FakeServer : WsTransport {
       setups++;
       lastSetup = m;
       CHECK(m.find("\"session.start\"") != std::string::npos, "ilk mesaj session.start degil: %.120s", m.c_str());
+      {
+        char rate[32];
+        snprintf(rate, sizeof(rate), "\"rate\":%d", (int)GPTLIVE_AUDIO_RATE);
+        CHECK(m.find(rate) != std::string::npos, "kurulumda ses hizi %s yok", rate);
+      }
       push("{\"type\":\"session.started\",\"session\":{\"id\":\"s1\"}}");
       return;
     }
@@ -170,7 +177,7 @@ static float usageSec = 0;
 static void fakeUsage(float sec, bool spoke) { usageCalls++; usageSpoke = spoke; usageSec = sec; }
 
 
-// GPT-Live'dan gelen sesli cevap: yüksek seviyeli 24 kHz PCM, base64
+// GPT-Live'dan gelen sesli cevap: yüksek seviyeli PCM (GPTLIVE_AUDIO_RATE), base64
 static std::string b64(const std::string &in) {
   static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   std::string o;
@@ -185,13 +192,13 @@ static std::string b64(const std::string &in) {
 }
 static std::string loudAudio(int ms) {
   std::string pcm;
-  for (int i = 0; i < 24 * ms; i++) { int16_t v = (i / 10) & 1 ? 4000 : -4000; pcm += (char)(v & 255); pcm += (char)((v >> 8) & 255); }
+  for (int i = 0; i < GPTLIVE_AUDIO_RATE / 1000 * ms; i++) { int16_t v = (i / 10) & 1 ? 4000 : -4000; pcm += (char)(v & 255); pcm += (char)((v >> 8) & 255); }
   return b64(pcm);
 }
 // GPT-Live model susarken de akışı sürdürür: düşük seviyeli (hışırtı) parça
 static std::string silentAudio(int ms) {
   std::string pcm;
-  for (int i = 0; i < 24 * ms; i++) { int16_t v = (i & 1) ? 12 : -12; pcm += (char)(v & 255); pcm += (char)((v >> 8) & 255); }
+  for (int i = 0; i < GPTLIVE_AUDIO_RATE / 1000 * ms; i++) { int16_t v = (i / 2) & 1 ? 12 : -12; pcm += (char)(v & 255); pcm += (char)((v >> 8) & 255); }
   return b64(pcm);
 }
 // Kullanıcının sözü (yazısı) ve ardından Nova'nın sesli cevabı (yazısıyla)
@@ -541,7 +548,7 @@ int main() {
     run(350);                                           // akış durdu: 350 ms hiç parça gelmedi
     fakeUnderruns++;                                    // hoparlör tamponu boşaldı
     novaSpeaks(300);                                    // ses geç geldi
-    CHECK(fakePrebuf == GPTLIVE_PREBUF_MS + 150 && logHas("ön tampon 350 ms"), "on tampon buyumedi: %d", fakePrebuf);
+    CHECK(fakePrebuf == GPTLIVE_PREBUF_MS + 150 && logHas("ön tampon 450 ms"), "on tampon buyumedi: %d", fakePrebuf);
     for (int k = 0; k < 4; k++) { run(300); fakeUnderruns++; novaSpeaks(200); }
     CHECK(fakePrebuf == GPTLIVE_PREBUF_MAX_MS, "ust sinir: %d", fakePrebuf);
     run(4000);
@@ -666,6 +673,72 @@ int main() {
     CHECK(linkState() != LINK_IDLE, "kullanici konusurken kisa kapanis (%s)", linkStateName());
     linkSleep();
     CHECK(runUntil(LINK_IDLE, 3000), "uyumadi");
+  }
+
+  printf("== 25) 16 kHz ses biçimi: gelen ses 24 kHz'e kesintisiz çevrilir, eşit parçalarla verilir; giden ses olduğu gibi gider (2.8.8)\n");
+  if (GPTLIVE_AUDIO_RATE == 16000) {
+    struct TS : ModelSink {
+      std::vector<int16_t> smp; std::vector<size_t> parts;
+      void onSetupComplete() override {}
+      void onAudio(const uint8_t *pcm, size_t bytes) override {
+        parts.push_back(bytes / 2);
+        for (size_t i = 0; i + 1 < bytes; i += 2) smp.push_back((int16_t)(pcm[i] | (pcm[i + 1] << 8)));
+      }
+      void onText(bool, const char *) override {}
+      void onGenerationComplete() override {}
+      void onTurnComplete() override {}
+      void onInterrupted() override {}
+      void onVoiceActivity(bool, int32_t) override {}
+      void onGoAway(int) override {}
+      void onResume(const char *, bool) override {}
+      void onUsage(long) override {}
+      void onError(const char *) override {}
+      void onOther(const char *, const char *, size_t) override {}
+    } ts;
+    gptlive::reset();
+    long ph = 0;
+    auto sine = [&](int n) {
+      std::string pcm;
+      for (int i = 0; i < n; i++, ph++) {
+        int16_t v = (int16_t)lrintf(10000.0f * sinf(2 * 3.14159265f * 1000.0f * ph / 16000.0f));
+        pcm += (char)(v & 255); pcm += (char)((v >> 8) & 255);
+      }
+      return "{\"type\":\"session.output_audio.delta\",\"delta\":\"" + b64(pcm) + "\"}";
+    };
+    const int lens[] = {1600, 1600, 1601, 1599, 1600};      // 100 ms'lik parçalar; tek sayılı ikisi birbirini tamamlar
+    for (int L : lens) { std::string m = sine(L); gptlive::handle(m.c_str(), m.size(), ts); }
+    CHECK(ts.smp.size() == 8000 * 3 / 2, "cikis %u ornek (12000 olmali)", (unsigned)ts.smp.size());
+    CHECK(ts.parts.size() >= 2 && ts.parts[0] == 1200 && ts.parts[1] == 1200, "100 ms'lik parca esit bolunmedi: %u + %u",
+          (unsigned)(ts.parts.size() > 0 ? ts.parts[0] : 0), (unsigned)(ts.parts.size() > 1 ? ts.parts[1] : 0));
+    size_t enKucuk = 99999;
+    for (size_t p : ts.parts) if (p < enKucuk) enKucuk = p;
+    CHECK(enKucuk >= 1000, "cok kucuk parca: %u ornek", (unsigned)enKucuk);
+    double sq = 0; int maxStep = 0;
+    for (size_t i = 200; i < ts.smp.size(); i++) {
+      sq += (double)ts.smp[i] * ts.smp[i];
+      int st = abs((int)ts.smp[i] - (int)ts.smp[i - 1]);
+      if (st > maxStep) maxStep = st;
+    }
+    float rms = sqrtf((float)(sq / (ts.smp.size() - 200)));
+    printf("   çıkış %u örnek, %u parça, 1 kHz RMS %.0f (7071), en büyük adım %d (kesintisizse ~2600)\n",
+           (unsigned)ts.smp.size(), (unsigned)ts.parts.size(), rms, maxStep);
+    CHECK(fabsf(rms - 7071.0f) < 150.0f, "seviye degisti: %.0f", rms);
+    CHECK(maxStep < 2900, "parca sinirinda sicrama: %d", maxStep);
+    // giden: 80 ms'lik mikrofon çerçevesi çevrilmeden gider
+    int16_t fr[1280];
+    for (int i = 0; i < 1280; i++) fr[i] = (int16_t)(i * 37 - 20000);
+    static char out[8192];
+    size_t n = gptlive::buildAudio(out, sizeof(out), fr, 1280);
+    std::string js(out, n);
+    size_t a = js.find("\"audio\":\"");
+    CHECK(a != std::string::npos && js.find("session.input_audio.append") != std::string::npos, "giden ses mesaji bozuk");
+    if (a != std::string::npos) {
+      std::string enc = js.substr(a + 9, js.size() - (a + 9) - 2);
+      std::string raw;
+      for (int i = 0; i < 1280; i++) { raw += (char)(fr[i] & 255); raw += (char)((fr[i] >> 8) & 255); }
+      CHECK(enc == b64(raw), "giden ses cevrilmis ya da bozuk (%u karakter, %u olmali)", (unsigned)enc.size(), (unsigned)b64(raw).size());
+    }
+    CHECK(gptlive::buildAudio(out, 100, fr, 1280) == 0, "sigmayan ses mesaji yazildi");
   }
 
   printf("\nSONUC: %s (%d hata)\n", fails ? "BASARISIZ" : "GECTI", fails);

@@ -28,6 +28,7 @@ class PlayEngine {
   size_t write(const uint8_t *data, size_t len) {
     if (!ring_) return 0;
     len &= ~(size_t)1;
+    if (len > 0) endPending_ = false;     // yeni ses geldi: önceki bitiş işareti ön tamponu atlatmasın
     // Kesme istenmişse eski ses yok sayılır: yeri hemen kullanılabilir.
     size_t h0 = head_, t0 = flushReq_ ? flushTo_ : tail_;
     size_t used = h0 >= t0 ? h0 - t0 : cap_ - t0 + h0;

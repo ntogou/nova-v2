@@ -2,11 +2,19 @@
 #include "b64.h"
 #include "resample.h"
 #include "psbuf.h"
+#include "config.h"
 #include "src/ArduinoJson-v7.4.2.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+
+#ifndef GPTLIVE_AUDIO_RATE
+#define GPTLIVE_AUDIO_RATE 16000
+#endif
+#if GPTLIVE_AUDIO_RATE != 16000 && GPTLIVE_AUDIO_RATE != 24000
+#error "GPTLIVE_AUDIO_RATE 16000 ya da 24000 olmali"
+#endif
 
 namespace gptlive {
 
@@ -14,8 +22,13 @@ namespace {
 
 Upsampler16to24 up;
 const size_t UP24_N = 2048 * 3 / 2;
-int16_t *up24 = nullptr;      // 24 kHz'e çevrilmiş mikrofon çerçevesi (UP24_N örnek, PSRAM'de)
+int16_t *up24 = nullptr;      // 24 kHz'e çevrilmiş mikrofon çerçevesi (UP24_N örnek, PSRAM'de; yalnız 24 kHz biçimde)
 uint8_t *audioBuf = nullptr;  // gelen sesin base64'ten çözüldüğü tampon (PSRAM'de)
+// 16 kHz biçimde gelen ses hoparlör için 24 kHz'e çevrilir (hoparlör, sınırlayıcı ve yankı referansı 24 kHz'te kalır).
+Upsampler16to24 upRx;
+const size_t RX_BLK = 1536;   // bir seferde çevrilen en çok giriş örneği (çıkışta 96 ms)
+int16_t *rx24 = nullptr;      // çevrilmiş parça (RX_BLK*3/2 örnek, PSRAM'de)
+size_t rxHave = 0;            // önceki parçadan kalan (çift örneğe tamamlanmamış) bayt, audioBuf'ın başında
 char pendingDelegation[80] = "";   // cihaza devredilen ve henüz cevaplanmamış iş
 bool backendBusy = false;          // arka model çalışıyor (kayıt satırı bir kez yazılsın diye)
 
@@ -107,8 +120,45 @@ bool typeStarts(const char *ty, size_t tyLen, const char *prefix) {
   return tyLen >= n && memcmp(ty, prefix, n) == 0;
 }
 
+// 16 kHz biçim: base64'ü çözer, 24 kHz'e çevirip verir. Parçalar eşit boyda verilir (100 ms'lik ses
+// 50+50 ms): link.cpp her parçanın seviyesine bakıp sessizlik mi konuşma mı diye karar veriyor, birkaç
+// ms'lik artık parçanın seviyesi gürültülü olur.
+size_t decodeAudio16(const char *d, size_t dLen, ModelSink &sink) {
+  uint8_t *buf = psLazy(audioBuf, RX_BLK * 2 + 8);
+  int16_t *o24 = psLazy(rx24, RX_BLK * 3 / 2);
+  if (!buf || !o24) return 0;
+  size_t estN = dLen / 4 * 3 / 2 + rxHave / 2;     // yaklaşık örnek sayısı
+  size_t k = estN > RX_BLK ? (estN + RX_BLK - 1) / RX_BLK : 1;
+  size_t blk = ((estN + k - 1) / k + 1) & ~(size_t)1;
+  if (blk < 2) blk = 2;
+  if (blk > RX_BLK) blk = RX_BLK;
+  const char *end = d + dLen;
+  B64Decoder dec;
+  size_t total = 0;
+  for (;;) {
+    if (d < end && rxHave < blk * 2) {
+      size_t used = 0;
+      rxHave += dec.feed(d, (size_t)(end - d), buf + rxHave, blk * 2 - rxHave, &used);
+      d += used;
+    }
+    bool done = d >= end;
+    if (rxHave >= blk * 2 || (done && rxHave >= 4)) {
+      size_t n = rxHave / 4 * 2;                     // çift sayıda örnek (çevirici böyle ister)
+      size_t m = upRx.process((const int16_t *)buf, n, o24);
+      sink.onAudio((const uint8_t *)o24, m * 2);
+      total += m * 2;
+      size_t rest = rxHave - n * 2;                  // 0-3 bayt: sonraki parçaya kalır
+      memmove(buf, buf + n * 2, rest);
+      rxHave = rest;
+    }
+    if (done) break;
+  }
+  return total;
+}
+
 // base64 sesi JSON ağacı kurmadan, parça parça çözer.
 size_t decodeAudio(const char *d, size_t dLen, ModelSink &sink) {
+  if (GPTLIVE_AUDIO_RATE == 16000) return decodeAudio16(d, dLen, sink);
   uint8_t *buf = psLazy(audioBuf, 3072 + 8);
   if (!buf) return 0;
   const char *end = d + dLen;
@@ -179,6 +229,8 @@ void setFirstEventLog(bool on) { logFirstEvents = on; }
 
 void reset() {
   up.reset();
+  upRx.reset();
+  rxHave = 0;
   pendingDelegation[0] = 0;
   backendBusy = false;
   seenCount = 0;
@@ -199,8 +251,9 @@ size_t buildSetup(char *out, size_t cap, const ModelConfig &c) {
     s["model"] = c.model;
     if (c.systemText && *c.systemText) s["instructions"] = c.systemText;
     JsonObject a = s["audio"].to<JsonObject>();
-    a["format"]["type"] = "audio/pcm";                     // giriş ve çıkış aynı biçimde: 24 kHz mono 16 bit
-    a["format"]["rate"] = 24000;
+    // Giriş ve çıkış aynı biçimde, mono 16 bit. 16 kHz: ağda 24 kHz'in 2/3'ü kadar veri (2.8.8).
+    a["format"]["type"] = "audio/pcm";
+    a["format"]["rate"] = GPTLIVE_AUDIO_RATE;
     if (c.level <= 2 && c.voice && *c.voice) a["output"]["voice"] = c.voice;
     if (c.level <= 1 && c.history && c.historyCount > skip) {
       JsonArray in = s["input"].to<JsonArray>();
@@ -251,6 +304,18 @@ size_t buildSetup(char *out, size_t cap, const ModelConfig &c) {
 size_t buildAudio(char *out, size_t cap, const int16_t *pcm16k, size_t samples) {
   static const char PRE[] = "{\"type\":\"session.input_audio.append\",\"audio\":\"";
   static const char POST[] = "\"}";
+  if (GPTLIVE_AUDIO_RATE == 16000) {                       // mikrofon zaten 16 kHz: olduğu gibi gider
+    size_t bytes = samples * 2;
+    size_t need = sizeof(PRE) - 1 + 4 * ((bytes + 2) / 3) + sizeof(POST) - 1;
+    if (need + 1 > cap) return 0;
+    size_t o = sizeof(PRE) - 1;
+    memcpy(out, PRE, o);
+    o += b64Encode((const uint8_t *)pcm16k, bytes, out + o);
+    memcpy(out + o, POST, sizeof(POST) - 1);
+    o += sizeof(POST) - 1;
+    out[o] = 0;
+    return o;
+  }
   if ((samples & 1) || samples * 3 / 2 > UP24_N || !psLazy(up24, UP24_N)) return 0;
   size_t bytes = samples * 3 / 2 * 2;
   size_t need = sizeof(PRE) - 1 + 4 * ((bytes + 2) / 3) + sizeof(POST) - 1;

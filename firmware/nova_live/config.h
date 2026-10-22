@@ -2,7 +2,7 @@
 // Pin haritası 10 Ekim 2026'da lehimlenen haliyle.
 #pragma once
 
-#define FW_VERSION "2.8.3"
+#define FW_VERSION "2.8.9"
 
 // ---------- Pinler ----------
 // Sağ amfi (MAX98357A)
@@ -150,18 +150,25 @@
 // açılır. Küçültmek mikrofonu erken açar ama cümle arasındaki duraklamada da açabilir (zararı yok:
 // Nova devam ederse yeniden kapanır).
 #ifndef GPTLIVE_END_GAP_MS
-#define GPTLIVE_END_GAP_MS 450
+#define GPTLIVE_END_GAP_MS 550
+#endif
+// GPT-Live ses biçimi (giriş ve çıkış aynı). 2.8.9: 24000 (16000 kartta kalitesiz duyuldu). 16000: ağda ~43 KB/sn; Nova'nın sesi 8 kHz'e kadar, cihazda
+// 24 kHz'e çevrilip çalınır. 24000: ~64 KB/sn (2.8.7'ye kadar). ESP32'nin TCP alma penceresi küçük (5,7 KB)
+// ve model susarken de gerçek zamanlı akış yolluyor: ağ yavaşlayınca 24 kHz'te birikme eriyemedi, ping 1-5 sn,
+// cevaplar 5-9 sn geç geldi (2.8.7, 0334 kaydı). Mikrofon zaten 16 kHz, modele giden seste kayıp yok.
+#ifndef GPTLIVE_AUDIO_RATE
+#define GPTLIVE_AUDIO_RATE 24000
 #endif
 // GPT-Live sesi büyük olasılıkla gerçek zamanlı yolluyor (Gemini ve GPT Realtime gibi önden
 // yığmıyor); ağ gecikince hoparlör boşta kalır ve ses takılır. Bu yüzden çalmaya başlamadan önce
 // SPK_PREBUF_MS'ten fazla ses biriktirilir. Büyütmek takılmayı azaltır, cevabı o kadar geciktirir.
 // "[nova] cevap bitti: ... akışta N duraklama" satırındaki N yüksekse büyüt.
 #ifndef GPTLIVE_PREBUF_MS
-#define GPTLIVE_PREBUF_MS  200
+#define GPTLIVE_PREBUF_MS  300
 #endif
 // Cevabın ortasında ses ağdan geç gelirse (hoparlör tamponu boşalır, takılma duyulur) ön tampon o oturumda
 // 150 ms'lik adımlarla en çok buna kadar büyütülür (2.6.2; iki kayıtta ~40 cevabın 2'sinde görüldü).
-#define GPTLIVE_PREBUF_MAX_MS 500
+#define GPTLIVE_PREBUF_MAX_MS 650
 // Hoparlör boşaldığında akışta (sessiz parçalar dahil) bundan uzun boşluk varsa ses ağdan geç gelmiş sayılır
 // ve ön tampon büyütülür; yoksa model duraksamıştır, ön tampon değişmez (2.8.1).
 #ifndef GPTLIVE_NET_GAP_MS
@@ -171,7 +178,7 @@
 // cümle aralarında yarım saniyeyi aşan duraklamalar yapıyor. Bu kadar süre ses gelmezse cevap bitmiş
 // sayılır (ekran "dinliyor"a döner, satır Serial'e basılır). Kullanıcı arada konuşursa hemen biter.
 #ifndef GPTLIVE_ANSWER_END_MS
-#define GPTLIVE_ANSWER_END_MS 1200
+#define GPTLIVE_ANSWER_END_MS 1400
 #endif
 // Kullanıcının sözünün yazısı bu kadar süre durunca (ve mikrofonda ses yokken) ekran "düşünüyor"a geçer
 #define GPTLIVE_THINK_AFTER_MS 900
@@ -224,9 +231,9 @@
 #ifndef LINK_MAX_QUIET_MS
 #define LINK_MAX_QUIET_MS  90000
 #endif
-// Söz bittikten sonra cevap gelmezse "düşünüyor" en çok bu kadar gösterilir
+// Söz bittikten sonra cevap gelmezse (ve arka model çalışmıyorsa) "düşünüyor" en çok bu kadar gösterilir
 #ifndef LINK_THINK_MAX_MS
-#define LINK_THINK_MAX_MS  8000
+#define LINK_THINK_MAX_MS  3500
 #endif
 // Nova sustuktan sonra mikrofonu açmadan önceki bekleme
 #ifndef LINK_POST_SPEECH_GUARD_MS
@@ -266,6 +273,21 @@
 #define ECHO_DELAY_MAX      4800   // ölçümde aranan en büyük gecikme (300 ms)
 #define ECHO_GATE_MARGIN_DB 8.0f   // Nova konuşurken kapı, ölçülen artık yankının bu kadar üstünde açılır
 #define ECHO_GATE_HANG_MS   250    // kapı açıldıktan sonra açık kalma (hece aralarında kesilmesin)
+// Araya girme (2.8.7): kapı eşiğe yakın bir ses görünce Nova'nın sesi bu kadar kısılır (0 = kapalı); yankı
+// düşer, normal sesle araya girilebilir. 2.8.9'da kapalı (kullanıcı beğenmedi). Bu süre içinde yeni aday ses gelmezse ses geri açılır.
+#ifndef ECHO_DUCK_DB
+#define ECHO_DUCK_DB        0.0f
+#endif
+#define ECHO_DUCK_HOLD_MS   400
+// Kısma adayı: kapı eşiğinin bu kadar dB altına kadar yaklaşan ses, ardışık bu kadar parça (32 ms) sürerse.
+// Kapı açılınca da kısılır. "[yankı] ... kısma N (boşa M)": M, kapı hiç açılmadan biten kısma (yankıyla
+// tetiklenmiş ya da kullanıcı çok kısık); M çoksa eşiğe yaklaşmayı küçült ya da parça sayısını artır.
+#define ECHO_DUCK_NEAR_DB   4.0f
+#define ECHO_DUCK_NEAR_N    3
+// Kapı açılınca, kapalıyken sıfırlanmış son bu kadar ms'lik ses de gönderilir: sözün başı kaybolmaz (0 = kapalı)
+#ifndef ECHO_LOOKBACK_MS
+#define ECHO_LOOKBACK_MS    256
+#endif
 #define ECHO_DEFAULT_ON     0      // ilk açılışta araya girme (sonra 'e' ile değişir, kartta saklanır)
 // Nova'nın cevabı başladıktan sonra bu süre içinde gelen kullanıcı yazısı araya girme sayılmaz: o, kullanıcının
 // bir önceki sözünün geç gelen parçasıdır (model sözün bitiminden ~200 ms önce konuşmaya başlayabiliyor, yazı

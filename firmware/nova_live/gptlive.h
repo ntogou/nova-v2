@@ -29,7 +29,7 @@
 namespace gptlive {
 
 size_t buildSetup(char *out, size_t cap, const ModelConfig &c);                   // session.start
-size_t buildAudio(char *out, size_t cap, const int16_t *pcm16k, size_t samples);  // session.input_audio.append (24 kHz'e çevirir)
+size_t buildAudio(char *out, size_t cap, const int16_t *pcm16k, size_t samples);  // session.input_audio.append (GPTLIVE_AUDIO_RATE 24000 ise 24 kHz'e çevirir)
 size_t buildText(char *out, size_t cap, const char *text, int part);              // session.instructions.append (yazılı soru)
 size_t buildInterrupt(char *out, size_t cap, int part, uint32_t playedMs);        // session.instructions.append ("sözün kesildi")
 size_t buildClose(char *out, size_t cap);                                         // session.close

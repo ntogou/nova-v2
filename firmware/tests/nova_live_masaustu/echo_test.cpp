@@ -67,8 +67,8 @@ int main() {
     CHECK(h.liveDb > -19 && h.liveDb < -10, "canli oran %.1f", h.liveDb);
     // kullanıcı Nova'nın üstüne yüksek sesle konuşuyor: çıkış referansın 2 dB altı
     int acik = 0;
-    for (int i = 0; i < 10; i++) acik += h.decide(4000, 4000 * 0.8f);
-    CHECK(acik == 10, "kullanici sesinde kapi kapali kaldi: %d/10", acik);
+    for (int i = 0; i < 60; i++) acik += h.decide(4000, 4000 * 0.8f);   // ~2 sn araya girme
+    CHECK(acik == 60, "kullanici sesinde kapi kapali kaldi: %d/60", acik);
     for (int i = 0; i < 9; i++) h.decide(4000, 4000 * 0.18f);   // açık kalma bitsin
     // hece bitti: referans bir anda sıfıra düştü ama odadaki yankı birkaç parça daha geliyor
     int kuyruk = 0;
@@ -90,6 +90,43 @@ int main() {
     CHECK(!h.decide(4000, 4000 * 0.05f), "sonraki sessiz parca acik");
     CHECK(!h.decide(4000, 4000 * 0.145f), "ikinci tekil parca ilk adimda acti");
     CHECK(h.decide(4000, 4000 * 0.155f), "ardisik ikinci parca kapiyi acmadi");
+  }
+
+  printf("== 3c) ses kısma adayı: Nova tek başına konuşurken nadiren, kullanıcı başlarken hemen (2.8.7; 2.8.8'de 4 dB / 3 parça)\n");
+  {
+    echomath::EchoGate h;
+    h.set(-30.0f, 8.0f, 8);
+    unsigned sd = 777;
+    auto jit = [&]() { sd = sd * 1103515245u + 12345u; return ((sd >> 16) % 600) / 100.0f - 3.0f; };
+    for (int i = 0; i < 300; i++) h.decide(4000, 4000 * powf(10.0f, (-15.0f + jit()) / 20.0f));   // öğrenme
+    int yanlis = 0;
+    for (int i = 0; i < 600; i++) {                      // 20 sn Nova tek başına
+      h.decide(4000, 4000 * powf(10.0f, (-15.0f + jit()) / 20.0f));
+      yanlis += h.candidate;
+    }
+    printf("   Nova tek başınayken aday parça %d/600\n", yanlis);
+    CHECK(yanlis <= 6, "Nova kendi sesiyle sik kisma adayi: %d/600", yanlis);
+    // kullanıcı eşiğin ~2,5 dB altında konuşmaya başlıyor (kapı açılmaz ama yakın): 3. parçada aday
+    printf("   eşik %.1f dB, aday sınırı %.1f dB\n", h.thresholdDb(), h.thresholdDb() + 20 * log10f(h.duckFrac));
+    float kul = h.thresholdDb() - 2.5f;
+    int ilk = -1;
+    for (int i = 0; i < 6; i++) {
+      h.decide(4000, 4000 * powf(10.0f, kul / 20.0f));
+      if (h.candidate && ilk < 0) ilk = i;
+    }
+    CHECK(ilk == 2, "kullanici baslarken aday %d. parcada (2 olmali)", ilk);
+    // yankıdaki kısa patlama (2 parça, eşiğin 2 dB altı) aday değil
+    for (int i = 0; i < 20; i++) h.decide(4000, 4000 * powf(10.0f, -15.0f / 20.0f));
+    float pat = h.thresholdDb() - 2.0f;
+    bool aday = false;
+    for (int i = 0; i < 2; i++) { h.decide(4000, 4000 * powf(10.0f, pat / 20.0f)); aday |= h.candidate; }
+    CHECK(!aday, "2 parcalik yanki patlamasi kismayi tetikledi");
+    echomath::DuckGain d;
+    float g1 = d.step(0.316f), g2 = d.step(0.316f);
+    CHECK(g1 < 0.7f && g2 <= 0.32f, "kisma yavas: %.2f %.2f", g1, g2);
+    int adim = 0;
+    while (d.g < 0.999f && adim < 50) { d.step(1.0f); adim++; }
+    CHECK(adim >= 8 && adim <= 12, "geri acilma %d blok (~10)", adim);
   }
 
   printf("== 4) 24 -> 16 kHz indirici: 1 kHz geçer, 10 kHz (16 kHz'te katlanırdı) süzülür, blok sınırında süreklilik\n");

@@ -113,6 +113,11 @@ static bool refStamp(int64_t &us, uint32_t &tot) {
   return false;
 }
 
+// Ses kısma (2.8.7): mikrofon görevi yazar, çalma görevi okur
+static volatile uint32_t duckUntil = 0;
+static volatile bool aecOn;
+static const float DUCK_LIN = ECHO_DUCK_DB > 0 ? powf(10.0f, -ECHO_DUCK_DB / 20.0f) : 1.0f;
+
 // ---------- çalma görevi ----------
 static void playTask(void *) {
   int16_t *const mono = playMono;
@@ -125,6 +130,16 @@ static void playTask(void *) {
     for (int i = 0; i < SPK_BLOCK; i++) mono[i] = stereo[2 * i];
     loud.statsEnable(inPeak > 0);
     loud.process(mono, mono, SPK_BLOCK);
+    {                                           // ses kısma: kullanıcı Nova'nın üstüne konuşmaya başlıyor olabilir
+      static echomath::DuckGain dk;
+      float hedef = (aecOn && (int32_t)(duckUntil - millis()) > 0) ? DUCK_LIN : 1.0f;
+      float g0 = dk.g, g1 = dk.step(hedef);
+      if (g0 < 0.999f || g1 < 0.999f)
+        for (int i = 0; i < SPK_BLOCK; i++) {
+          float g = g0 + (g1 - g0) * (i + 1) / SPK_BLOCK;
+          mono[i] = (int16_t)lroundf(mono[i] * g);
+        }
+    }
     uint16_t peak = 0;
     for (int i = 0; i < SPK_BLOCK; i++) {
       int16_t v = mono[i];
@@ -773,12 +788,19 @@ static volatile int echoDelayS = -1;            // ölçülen gecikme (örnek); 
 static volatile float echoResid[4] = {-20.0f, -20.0f, -20.0f, -20.0f};   // ölçülen artık / referans (dB), NLP ayarına göre
 static volatile int echoNlpSel = ECHO_NLP_DEFAULT;     // 0 normal, 1 güçlü, 3 kapalı (yalnızca doğrusal)
 static bool aecLinear = false;                  // bu kurulumda NLP yok: yalnızca doğrusal silme
-static volatile bool aecWant = false, aecOn = false;
+static volatile bool aecWant = false;
 static aec_handle_t *aecH = nullptr;
 static int aecC = 0, aecPos = 0;
 static uint32_t aecStartIdx = 0;
 static int16_t *aecIn = nullptr, *aecRef = nullptr, *aecOut = nullptr;
 static echomath::EchoGate gate;
+// Geriye dönük gönderme (2.8.7): kapı kapalıyken sıfırlanan son parçalar burada tutulur; kapı açılınca
+// sözün başı ("Şe-", "Da-") kaybolmasın diye önce bunlar gönderilir.
+#define LB_N ((ECHO_LOOKBACK_MS * 16 + 511) / 512)
+static int16_t *lbBuf = nullptr;                // LB_N x aecC (PSRAM)
+static int lbHead = 0, lbClosed = 0, lbEmit = 0;
+static bool lbWasOpen = true;
+static volatile uint32_t esDucks = 0, esDuckWaste = 0, esLookback = 0;
 static bool aecFirst = true;
 // durum satırı için (her okumada sıfırlanır)
 static volatile uint32_t esChunks = 0, esFar = 0, esOpenFar = 0, esMiss = 0, esProcUs = 0, esProcMax = 0;
@@ -867,8 +889,17 @@ static void echoApply(bool on) {
     aecWant = false;
     return;
   }
+  if (!lbBuf && ECHO_LOOKBACK_MS > 0 && aecC <= 512) lbBuf = (int16_t *)psAlloc((size_t)LB_N * 512 * 2);
+  lbHead = lbClosed = lbEmit = 0;
+  lbWasOpen = true;
+  duckUntil = 0;
   aecPos = 0;
   gate.set(echoResid[nlp & 3], ECHO_GATE_MARGIN_DB, (ECHO_GATE_HANG_MS * 16 + aecC - 1) / aecC);
+  gate.duckFrac = powf(10.0f, -ECHO_DUCK_NEAR_DB / 20.0f);
+  gate.nearNeed = ECHO_DUCK_NEAR_N;
+  // 'a' ölçümü durağan hışırtıyla -42 dB verir ama konuşmada artık yankı -20 dB civarındadır (2.8.4 kaydı).
+  // İlk oturumun ilk cümlesinde kapının kendi sesiyle açılmaması için canlı tahmin -26 dB tabanından başlar.
+  if (gate.liveN == 0 && gate.liveDb < -26.0f) gate.liveDb = -26.0f;
   gate.hang = 0;
   aecOn = true;
   if (aecFirst) {
@@ -911,6 +942,32 @@ static void echoChunk() {
     esOutDb = esOutDb + echomath::dbOf(outRms);
     if (open) esOpenFar = esOpenFar + 1;
     else { esResidSum = esResidSum + echomath::dbOf(outRms) - echomath::dbOf(refRms); esResidN = esResidN + 1; }
+  }
+  // Kısma: aday ses görülünce. Kapı hiç açılmadan biten kısma "boşa" sayılır (yankı tetiklemiş olabilir).
+  {
+    static bool duckEp = false, duckEpOpen = false;
+    bool duckActive = (int32_t)(duckUntil - millis()) > 0;
+    if (duckEp && !duckActive) {
+      if (!duckEpOpen) esDuckWaste = esDuckWaste + 1;
+      duckEp = false;
+    }
+    if (ECHO_DUCK_DB > 0 && gate.candidate) {
+      if (!duckActive) { esDucks = esDucks + 1; duckEp = true; duckEpOpen = false; }
+      duckUntil = millis() + ECHO_DUCK_HOLD_MS;
+    }
+    if (duckEp && open && gate.refEnv > gate.farMin) duckEpOpen = true;
+  }
+  // geriye dönük: bu parçanın ham hali saklanır; kapalı-açık geçişinde önceki kapalı parçalar gönderilecek
+  if (lbBuf && LB_N > 0 && aecC <= 512) {
+    memcpy(lbBuf + lbHead * aecC, aecOut, aecC * 2);
+    lbHead = (lbHead + 1) % LB_N;
+    bool uzak = gate.refEnv > gate.farMin;      // kapının kendi ölçüsü (referansın zarfı)
+    if (open && !lbWasOpen && uzak && lbClosed > 0) {
+      lbEmit = lbClosed < LB_N - 1 ? lbClosed : LB_N - 1;
+      esLookback = esLookback + 1;
+    }
+    lbClosed = (!open && uzak) ? lbClosed + 1 : 0;
+    lbWasOpen = open;
   }
   if (!open) memset(aecOut, 0, aecC * 2);
 }
@@ -1043,6 +1100,20 @@ static void micTask(void *) {
           for (int k = 0; k < aecC; k++) aecOut[k] = sat16(aecOut[k] * up);
           src = aecOut;
           srcN = aecC;
+          // Kapı şimdi açıldı: önce kapalıyken sıfırlanmış son parçalar (sözün başı) gönderilir
+          for (; lbEmit > 0; lbEmit--) {
+            const int16_t *eski = lbBuf + ((lbHead - 1 - lbEmit + 2 * LB_N) % LB_N) * aecC;
+            for (int k = 0; k < aecC; k++) {
+              frame[pos++] = sat16(eski[k] * up);
+              if (pos == MIC_FRAME_SAMPLES) {
+                pos = 0;
+                if (xQueueSend(micQ, frame, 0) != pdTRUE) {
+                  xQueueReceive(micQ, dropBuf, 0);
+                  xQueueSend(micQ, frame, 0);
+                }
+              }
+            }
+          }
         }
         for (int k = 0; k < srcN; k++) {
           frame[pos++] = src[k];
@@ -1104,6 +1175,10 @@ size_t echoStatusText(char *b, size_t cap) {
                   farSmp ? 100.0f * clip / farSmp : 0.0f);
   if (far && n > 0 && (size_t)n < cap)       // kapının eşiği (artık / referans): ölçümden ve oturumdaki canlı orandan
     n += snprintf(b + n, cap - n, ", eşik %.0f dB (ölçüm %.0f, canlı %.0f)", gate.thresholdDb(), gate.baseDb, gate.liveDb);
+  uint32_t dk = esDucks, dw = esDuckWaste, lb = esLookback;
+  esDucks = 0; esDuckWaste = 0; esLookback = 0;
+  if ((dk || dw || lb) && n > 0 && (size_t)n < cap)
+    n += snprintf(b + n, cap - n, ", kısma %u (boşa %u), geriye dönük %u", (unsigned)dk, (unsigned)dw, (unsigned)lb);
   if (miss && n > 0 && (size_t)n < cap) n += snprintf(b + n, cap - n, ", referanssız %u", (unsigned)miss);
   return n > 0 ? (size_t)n : 0;
 }

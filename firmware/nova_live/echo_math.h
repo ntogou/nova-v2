@@ -86,6 +86,14 @@ struct EchoGate {
   int hangChunks = 8;        // açıldıktan sonra açık kalma (parça)
   int hang = 0;
   int hit = 0;               // eşiğin hemen üstündeki ardışık parça sayısı (tek parçalık patlamalı harf yankısını eler)
+  // Ses kısma için (2.8.7): eşiğe yakın ses (kullanıcı konuşmaya başlıyor olabilir). Eşiğin duckFrac katını
+  // ardışık nearNeed parça aşarsa ya da kapı açıksa "aday" olur; ses kısılınca yankı düşer, söz eşiği geçer.
+  // 2.8.7'de (eşiğin 6 dB altı, 2 parça) Nova tek başına konuşurken ~5 sn'de 1-3 kez kısıldı, duyuldu;
+  // 2.8.8'de 4 dB / 3 parça.
+  float duckFrac = 0.63f;    // eşiğin 4 dB altı
+  int nearNeed = 3;          // ardışık parça (~96 ms)
+  int nearRun = 0;
+  bool candidate = false;
   uint32_t liveN = 0;        // canlı orana katılan parça sayısı (açılıştan beri)
   void set(float residRefDb, float margin, int hangN) {
     if (residRefDb != baseDb || !liveN) liveDb = residRefDb;   // ölçüm değiştiyse canlı tahmin baştan
@@ -101,25 +109,46 @@ struct EchoGate {
   bool decide(float refRms, float outRms) {
     refEnv = refRms > refEnv * envDecay ? refRms : refEnv * envDecay;
     bool far = refEnv > farMin;
-    if (!far) { hang = 0; hit = 0; return true; }
+    if (!far) { hang = 0; hit = 0; nearRun = 0; candidate = false; return true; }
     float ratioDb = dbOf(outRms) - dbOf(refEnv);
+    float thr = refEnv * powf(10.0f, thresholdDb() / 20.0f);
+    if (thr < nearFloor) thr = nearFloor;
+    bool userish = outRms > thr || hang > 0;     // bu parça kullanıcı sesi sayılıyor (ya da açık kalma süresinde)
     // Canlı oran: yalnızca Nova bu parçada gerçekten ses çıkarırken (hece/kelime arası sönme kuyruğunda
     // referans 0 iken güncellenirse eşik hızla düşer ve sonraki "B/P/K" harfinde kendi yankısıyla açılır).
+    // İlk ~2 sn (liveN < 60) hızlı öğrenir (açılışta ölçüm değeri gerçeğin çok altında kalıyor, 2.8.5).
+    // Sonra kullanıcı sesi sayılan parçalardan çok yavaş öğrenir: yoksa araya giren kullanıcının sesini
+    // yankı sanıp eşiği yükseltir ve 0,5 sn sonra onu da keser (2.8.6, t_echo 3b).
     if (refRms > farMin * 4 && refRms >= refEnv * 0.6f) {
-      liveDb += ratioDb > liveDb ? 0.4f : -0.05f;
+      float adim;
+      if (liveN < 60) adim = ratioDb > liveDb ? (ratioDb > liveDb + 6.0f ? 1.2f : 0.4f) : -0.05f;
+      else if (userish) adim = ratioDb > liveDb ? 0.02f : 0.0f;   // sızan yankı yine de ~10 sn'de öğrenilir
+      else adim = ratioDb > liveDb ? 0.4f : -0.05f;
+      liveDb += adim;
       if (liveDb < baseDb) liveDb = baseDb;
       if (liveDb > baseDb + 30) liveDb = baseDb + 30;
       liveN++;
     }
-    float thr = refEnv * powf(10.0f, thresholdDb() / 20.0f);
-    if (thr < nearFloor) thr = nearFloor;
+    nearRun = outRms > thr * duckFrac ? nearRun + 1 : 0;
+    candidate = nearRun >= nearNeed;
     if (outRms > thr) {
-      if (hang > 0 || outRms > thr * 1.35f || ++hit >= 2) { hang = hangChunks; return true; }
+      if (hang > 0 || outRms > thr * 1.35f || ++hit >= 2) { hang = hangChunks; candidate = true; return true; }
       return false;
     }
     hit = 0;
-    if (hang > 0) { hang--; return true; }
+    if (hang > 0) { hang--; candidate = true; return true; }
     return false;
+  }
+};
+
+// Ses kısma kazancı (çalma görevinde blok başına): hedefe hızlı iner (2 blok), yavaş çıkar (~150 ms).
+struct DuckGain {
+  float g = 1.0f;
+  // target: 1 ya da kısık kazanç. Dönüş: bu bloğun sonundaki kazanç (blok içinde g0'dan buna doğrusal geçilir)
+  float step(float target) {
+    if (target < g) g = g - (1.0f - target) * 0.5f < target ? target : g - (1.0f - target) * 0.5f;
+    else if (target > g) g = g + 0.07f > target ? target : g + 0.07f;
+    return g;
   }
 };
 
